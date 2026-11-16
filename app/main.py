@@ -3,6 +3,8 @@ Trust model: behind properly trusted HTTPS only. No ESP local endpoint is expose
 """
 from __future__ import annotations
 import hashlib, hmac, json, os, re, secrets, sqlite3, time
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Literal
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
@@ -18,6 +20,8 @@ EXPECTED_ORIGIN = os.getenv('VEGA_PUBLIC_URL', 'https://213.91.182.27:38443').rs
 if len(ADMIN_PASSWORD) < 16 or len(SESSION_SECRET) < 32:
     raise RuntimeError('Strong VEGA_ADMIN_PASSWORD and VEGA_SESSION_SECRET are mandatory')
 app = FastAPI(title='Vega-S Cloud v2', docs_url=None, redoc_url=None, openapi_url=None)
+ENERGY_TZ = ZoneInfo('Europe/Sofia')  # Local calendar for daily / monthly estimates
+ENERGY_MAX_GAP_S = 40  # Never extrapolate energy across missing network updates
 
 def connect():
     p = Path(DB);p.parent.mkdir(parents=True, exist_ok=True)
@@ -43,6 +47,87 @@ def verify_password(password:str,record:str)->bool:
 def digest(v:str)->str:return hashlib.sha256(v.encode()).hexdigest()
 def session_hash(v:str)->str:return hmac.new(SESSION_SECRET.encode(),v.encode(),hashlib.sha256).hexdigest()
 def now()->int:return int(time.time())
+
+def energy_rates(db, did):
+    row = db.execute('SELECT day_rate,night_rate,day_start,night_start FROM device_rates WHERE device_id=?', (did,)).fetchone()
+    return dict(row) if row else {'day_rate': 0.0, 'night_rate': 0.0, 'day_start': 7, 'night_start': 23}
+
+def energy_integrate(db, did, old_seen, old_state, ts):
+    # Accumulate estimated energy only across two recent actual syncs.
+
+    # Real kWh metering is NOT present. Previous relay state * nominal W is used;
+    # Stale gaps are discarded instead of inventing operation during downtime.
+    gap = ts - old_seen
+    if not old_seen or not (0 < gap <= ENERGY_MAX_GAP_S) or not old_state.get('relay'):
+        return
+    power = old_state.get('power_w')
+    if not isinstance(power, int) or power not in (250, 400, 600, 750, 1250, 2000):
+        return
+    tariffs = energy_rates(db, did)
+    begin = old_seen
+    while begin < ts:
+        hour = (begin // 3600) * 3600
+        end = min(ts, hour + 3600)
+        elapsed = end - begin
+        local_hour = datetime.fromtimestamp(begin, ENERGY_TZ).hour
+        a, b = tariffs['day_start'], tariffs['night_start']
+        is_day = a <= local_hour < b if a < b else (local_hour >= a or local_hour < b)
+        wh = elapsed * power / 3600.0
+        day_wh, night_wh = (wh, 0.0) if is_day else (0.0, wh)
+        db.execute('''INSERT INTO device_energy_hourly(device_id,hour_start,day_wh,night_wh,on_seconds)
+          VALUES(?,?,?,?,?) ON CONFLICT(device_id,hour_start) DO UPDATE SET
+          day_wh=day_wh+excluded.day_wh,night_wh=night_wh+excluded.night_wh,
+          on_seconds=on_seconds+excluded.on_seconds''', (did,hour,day_wh,night_wh,float(elapsed)))
+        begin = end
+
+def local_period_start(ts, period):
+    dt = datetime.fromtimestamp(ts, ENERGY_TZ)
+    if period == 'today':
+        return int(dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    if period == 'month':
+        return int(dt.replace(day=1,hour=0,minute=0,second=0,microsecond=0).timestamp())
+    raise ValueError(period)
+
+def energy_summary(db, did, ts):
+    month_start = local_period_start(ts, 'month')
+    today_start = local_period_start(ts, 'today')
+    rates = energy_rates(db, did)
+    totals = {'today': [0.0, 0.0, 0.0], 'month': [0.0, 0.0, 0.0]}
+    for r in db.execute('SELECT hour_start,day_wh,night_wh,on_seconds FROM device_energy_hourly WHERE device_id=? AND hour_start>=? AND hour_start<=?',(did,month_start,ts)):
+        for period in ('month','today'):
+            if r['hour_start'] >= (today_start if period == 'today' else month_start):
+                x=totals[period];x[0]+=r['day_wh'];x[1]+=r['night_wh'];x[2]+=r['on_seconds']
+    price_ok = rates['day_rate'] > 0 and rates['night_rate'] > 0
+    def fmt(vals):
+        day,night,on=vals
+        return {'kwh':round((day+night)/1000,3),'day_kwh':round(day/1000,3),
+                'night_kwh':round(night/1000,3),'runtime_h':round(on/3600,2),
+                'cost_eur':round((day*rates['day_rate']+night*rates['night_rate'])/1000,2) if price_ok else None}
+    return {'today':fmt(totals['today']),'month':fmt(totals['month']),
+            'rates':rates,'cost_configured':price_ok,'kind':'estimated',
+            'note':'Оценка по номинална мощност и състоянието на релето; само за периоди с редовна облачна връзка.'}
+
+def energy_series(db, did, period, ts):
+    dt = datetime.fromtimestamp(ts, ENERGY_TZ)
+    if period == '24h':
+        start_hour = (ts // 3600 - 23) * 3600
+        points = [{'label':datetime.fromtimestamp(start_hour + i*3600,ENERGY_TZ).strftime('%H:%M'),
+                   'kwh':0.0,'key':start_hour + i*3600} for i in range(24)]
+        by_key = {x['key']:x for x in points}
+    elif period == 'month':
+        points = [{'label':str(i),'kwh':0.0,'key':i} for i in range(1,dt.day+1)]
+        by_key = {x['key']:x for x in points}
+        start_hour = local_period_start(ts,'month')
+    elif period == 'year':
+        points = [{'label':str(i).zfill(2),'kwh':0.0,'key':i} for i in range(1,13)]
+        by_key = {x['key']:x for x in points}
+        start_hour = int(dt.replace(month=1,day=1,hour=0,minute=0,second=0,microsecond=0).timestamp())
+    else:
+        raise HTTPException(400,'Невалиден период')
+    for r in db.execute('SELECT hour_start,day_wh,night_wh FROM device_energy_hourly WHERE device_id=? AND hour_start>=? AND hour_start<=?',(did,start_hour,ts)):
+        key = r['hour_start'] if period=='24h' else (datetime.fromtimestamp(r['hour_start'],ENERGY_TZ).day if period=='month' else datetime.fromtimestamp(r['hour_start'],ENERGY_TZ).month)
+        if key in by_key:by_key[key]['kwh']+=(r['day_wh']+r['night_wh'])/1000
+    return [{'label':x['label'],'kwh':round(x['kwh'],3)} for x in points]
 
 @app.on_event('startup')
 def startup():
@@ -75,6 +160,16 @@ def startup():
             detail TEXT,ts INTEGER NOT NULL);
           CREATE INDEX IF NOT EXISTS idx_commands_device ON commands(device_id,status,expires);
           CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires);
+          CREATE TABLE IF NOT EXISTS device_energy_hourly (
+            device_id TEXT NOT NULL, hour_start INTEGER NOT NULL,
+            day_wh REAL NOT NULL DEFAULT 0, night_wh REAL NOT NULL DEFAULT 0,
+            on_seconds REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY(device_id,hour_start), FOREIGN KEY(device_id) REFERENCES devices(id));
+          CREATE TABLE IF NOT EXISTS device_rates (
+            device_id TEXT PRIMARY KEY, day_rate REAL NOT NULL DEFAULT 0,
+            night_rate REAL NOT NULL DEFAULT 0, day_start INTEGER NOT NULL DEFAULT 7,
+            night_start INTEGER NOT NULL DEFAULT 23,
+            FOREIGN KEY(device_id) REFERENCES devices(id));
         ''')
         existing=db.execute("SELECT id FROM users WHERE role='admin' LIMIT 1").fetchone()
         if not existing:
@@ -248,16 +343,65 @@ def claim(p:Claim,u=Depends(user_auth)):
 
 @app.get('/api/devices')
 def list_devices(u=Depends(user_auth)):
+    result=[]
     with connect() as db:
         if u['role']=='admin':rows=db.execute('''SELECT d.*,u.username as owner FROM devices d LEFT JOIN users u ON d.owner_id=u.id ORDER BY d.name''').fetchall()
         else:rows=db.execute('''SELECT d.*,u.username as owner FROM devices d LEFT JOIN users u ON d.owner_id=u.id WHERE d.owner_id=? ORDER BY d.name''',(u['id'],)).fetchall()
-    result=[]
-    for d in rows:
-        result.append({'id':d['id'],'name':d['name'],'owner':d['owner'],
-                       'online':now()-d['seen']<=35 if d['seen'] else False,
-                       'last_seen':d['seen'],'state':json.loads(d['state']),
-                       'location':{'lat':d['lat'],'lon':d['lon']} if d['lat'] is not None else None})
+        ts=now()
+        for d in rows:
+            result.append({'id':d['id'],'name':d['name'],'owner':d['owner'],
+                           'online':ts-d['seen']<=35 if d['seen'] else False,
+                           'last_seen':d['seen'],'state':json.loads(d['state']),
+                           'energy':energy_summary(db,d['id'],ts),
+                           'location':{'lat':d['lat'],'lon':d['lon']} if d['lat'] is not None else None})
     return {'devices':result}
+
+@app.get('/api/devices/{did}/energy')
+def get_device_energy(did:str, period:str='24h', u=Depends(user_auth)):
+    if period not in ('24h','month','year'):raise HTTPException(400,'Невалиден период')
+    with connect() as db:
+        device_access(db,u['id'],u['role'],did)
+        ts=now()
+        return {'period':period,'points':energy_series(db,did,period,ts),
+                'energy':energy_summary(db,did,ts)}
+
+class RatesSet(BaseModel):
+    day_rate:float=Field(ge=0,le=5)
+    night_rate:float=Field(ge=0,le=5)
+    day_start:int=Field(ge=0,le=23)
+    night_start:int=Field(ge=0,le=23)
+
+@app.put('/api/admin/devices/{did}/rates')
+def update_device_rates(did:str,p:RatesSet,u=Depends(admin_auth)):
+    if p.day_start==p.night_start:raise HTTPException(400,'Началните часове трябва да се различават')
+    with connect() as db:
+        device_access(db,u['id'],u['role'],did)
+        db.execute('''INSERT INTO device_rates(device_id,day_rate,night_rate,day_start,night_start)
+             VALUES(?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET
+             day_rate=excluded.day_rate,night_rate=excluded.night_rate,
+             day_start=excluded.day_start,night_start=excluded.night_start''',
+             (did,p.day_rate,p.night_rate,p.day_start,p.night_start))
+    audit(u['id'],'rates_updated',did)
+    return {'ok':True}
+
+class AdminClaim(BaseModel):
+    id:str=Field(min_length=6,max_length=40)
+    pairing_code:str=Field(min_length=16,max_length=64)
+    owner_id:int|None=None
+
+@app.post('/api/admin/devices/claim')
+def admin_claim(p:AdminClaim,u=Depends(admin_auth)):
+    owner=p.owner_id if p.owner_id is not None else u['id']
+    with connect() as db:
+        user=db.execute('SELECT id FROM users WHERE id=? AND active=1',(owner,)).fetchone()
+        if not user:raise HTTPException(404,'Няма такъв активен потребител')
+        d=db.execute('SELECT owner_id,pairing_hash FROM devices WHERE id=?',(p.id,)).fetchone()
+        if not d or not hmac.compare_digest(d['pairing_hash'],digest(p.pairing_code.strip().upper())):
+            raise HTTPException(404,'Провери ID и кода от термостата')
+        if d['owner_id'] is not None:raise HTTPException(409,'Устройството вече има собственик')
+        db.execute('UPDATE devices SET owner_id=? WHERE id=? AND owner_id IS NULL',(owner,p.id))
+    audit(u['id'],'device_claimed_for_user',f'{p.id}:user:{owner}')
+    return {'ok':True}
 
 class Rename(BaseModel):name:str=Field(min_length=1,max_length=64)
 @app.patch('/api/devices/{did}')
@@ -353,8 +497,14 @@ class Sync(BaseModel):
 def sync(did:str,p:Sync,_=Depends(device_auth)):
     state=p.model_dump(exclude={'ack_ids','ota_report_id','ota_result'})
     with connect() as db:
-        db.execute('UPDATE devices SET seen=?,state=? WHERE id=?',(now(),json.dumps(state),did))
-        db.execute("UPDATE commands SET status='expired' WHERE device_id=? AND status='pending' AND expires<=?",(did,now()))
+        ts=now()
+        previous=db.execute('SELECT seen,state FROM devices WHERE id=?',(did,)).fetchone()
+        if previous:
+            try: old_state=json.loads(previous['state'])
+            except (ValueError,TypeError):old_state={}
+            energy_integrate(db,did,previous['seen'],old_state,ts)
+        db.execute('UPDATE devices SET seen=?,state=? WHERE id=?',(ts,json.dumps(state),did))
+        db.execute("UPDATE commands SET status='expired' WHERE device_id=? AND status='pending' AND expires<=?",(did,ts))
         for cid in p.ack_ids:
             if len(cid)==24:db.execute("UPDATE commands SET status='acknowledged' WHERE id=? AND device_id=? AND status='pending'",(cid,did))
         if p.ota_report_id and p.ota_result:
@@ -475,3 +625,4 @@ def index():
 def js():return FileResponse(ROOT/'static'/'app.js',media_type='text/javascript')
 @app.get('/static/app.css')
 def css():return FileResponse(ROOT/'static'/'app.css',media_type='text/css')
+
