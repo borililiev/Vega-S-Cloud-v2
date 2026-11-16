@@ -25,6 +25,7 @@ function setTab(tab){
   const button=$(id);button.classList.toggle('active',t===tab);button.setAttribute('aria-current',t===tab?'page':'false');
  }
  if(tab==='admin')refreshAdmin();
+ if(tab==='profile')refreshHaTokenStatus();
  if(tab==='home'){renderSelected();loadChart(true)}
 }
 $('homeTab').onclick=()=>setTab('home');$('adminTab').onclick=()=>setTab('admin');$('profileTab').onclick=()=>setTab('profile');
@@ -224,6 +225,37 @@ $('newUserForm').onsubmit=async e=>{e.preventDefault();try{
  await api('/api/admin/users','POST',{username:$('newUsername').value,password:$('newUserPassword').value});
  $('newUsername').value='';$('newUserPassword').value='';notice('Потребителят е създаден');await refreshAdmin();
  }catch(e){notice(e.message)}};
+async function refreshHaTokenStatus(){
+ try {
+  const r=await api('/api/ha/token');
+  $('haTokenStatus').textContent=r.configured?'Ключът е активен. Създаването на нов обезсилва стария.':'Няма активен Home Assistant ключ.';
+  $('haTokenRevoke').disabled=!r.configured;
+ }catch(e){$('haTokenStatus').textContent=e.message}
+}
+$('haTokenCreate').onclick=async()=>{
+ if(!confirm('Създаването на нов ключ ще прекрати връзката на Home Assistant със стария. Продължи?'))return;
+ try {
+  const r=await api('/api/ha/token','POST',{});
+  $('haTokenValue').value=r.token;
+  $('haTokenShow').hidden=false;
+  notice('Запази HA ключа в Home Assistant. Сървърът няма да го покаже повторно.');
+  await refreshHaTokenStatus();
+ }catch(e){notice(e.message)}
+};
+$('haTokenCopy').onclick=async()=>{
+ const value=$('haTokenValue').value;
+ if(!value)return;
+ try{await navigator.clipboard.writeText(value);notice('Ключът е копиран')}
+ catch{ $('haTokenValue').focus();$('haTokenValue').select();notice('Маркирах ключа. Копирай го ръчно.') }
+};
+$('haTokenRevoke').onclick=async()=>{
+ if(!confirm('Да се отнеме достъпът на Home Assistant за този профил?'))return;
+ try {
+  await api('/api/ha/token','DELETE',{});
+  $('haTokenValue').value='';$('haTokenShow').hidden=true;
+  await refreshHaTokenStatus();notice('Home Assistant ключът е отменен.');
+ }catch(e){notice(e.message)}
+};
 $('myPasswordForm').onsubmit=async e=>{e.preventDefault();try{
  await api('/api/me/password','POST',{old_password:$('currentPw').value,new_password:$('newPw').value});
  csrf='';role='';showLogin(true);notice('Паролата е сменена. Влез отново.');
