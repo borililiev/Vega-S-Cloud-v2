@@ -13,3 +13,14 @@
 .owner-buttons{display:flex;gap:8px;flex-wrap:wrap}
 .owner-buttons button:disabled{opacity:.4;cursor:not-allowed}
 @media(max-width:580px){.owner-buttons button{flex:1 1 100%}.admin-heading .mini-pill{margin-top:4px}}
+
+/* Vega-S Cloud Home Assistant token management. */
+.ha-access{margin-top:28px;padding-top:22px;border-top:1px solid #334b65}
+.ha-access h3{margin:0 0 9px}
+.ha-access-actions{display:flex;gap:9px;flex-wrap:wrap;margin:14px 0}
+.ha-access-actions button{flex:1 1 175px}
+.ha-access #haTokenShow{display:block;margin:14px 0;font-size:13px}
+.ha-access #haTokenShow[hidden]{display:none}
+.ha-access #haTokenValue{width:100%;min-height:76px;margin:7px 0;padding:10px;
+  border:1px solid #516682;border-radius:9px;background:#0b1d30;color:#eef4ff;
+  resize:vertical;overflow-wrap:anywhere;font-family:ui-monospace,monospace;font-size:12px}
