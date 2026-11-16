@@ -92,7 +92,20 @@
       <section id="profileSection" hidden><div class="admin-card profile-card"><h2>Моят профил</h2><p class="muted">Смяната на паролата прекратява текущите сесии.</p>
         <form id="myPasswordForm"><label>Текуща парола<input id="currentPw" type="password" autocomplete="current-password" required></label>
           <label>Нова парола (поне 12 символа)<input id="newPw" type="password" minlength="12" autocomplete="new-password" required></label>
-          <button type="submit" class="primary">Смени паролата и излез</button></form></div></section>
+          <button type="submit" class="primary">Смени паролата и излез</button></form>
+        <div class="ha-access">
+          <h3>Home Assistant — през облака</h3>
+          <p class="muted">Home Assistant се свързва със сървъра Vega-S Cloud, а не директно с ESP8266. Ключът е само за термостатите, достъпни за твоя профил.</p>
+          <p id="haTokenStatus" class="muted">Проверка на ключа…</p>
+          <div class="ha-access-actions"><button id="haTokenCreate" class="minor" type="button">Създай / смени HA ключ</button>
+          <button id="haTokenRevoke" class="minor danger" type="button">Отмени ключа</button></div>
+          <label id="haTokenShow" hidden>Нов HA ключ (показва се само веднъж)
+            <textarea id="haTokenValue" rows="3" readonly autocomplete="off" spellcheck="false"></textarea>
+            <button id="haTokenCopy" class="minor" type="button">Копирай ключа</button>
+          </label>
+          <p class="muted">В Home Assistant добави интеграцията Vega-S Cloud и въведи адреса на сървъра, този ключ и пътя към доверения Caddy CA сертификат.</p>
+        </div>
+      </div></section>
     </section>
     <footer>Vega-S Cloud · Локалните защити работят независимо от облака</footer>
   </main>
