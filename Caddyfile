@@ -1,0 +1,14 @@
+# TEST TLS only: Caddy internal CA. Trust the generated CA explicitly on every client.
+# Do not click through browser warnings. For public rollout, use a publicly trusted
+# certificate and adapt this config to existing port 80/443 reverse-proxy infrastructure.
+https://213.91.182.27:38443 {
+    tls internal
+    encode gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+        -Server
+    }
+    reverse_proxy cloud:8000
+}

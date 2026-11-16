@@ -1,0 +1,34 @@
+services:
+  cloud:
+    build: .
+    env_file: .env
+    environment:
+      VEGA_DB: /data/vega.sqlite3
+      VEGA_FIRMWARE_DIR: /data/firmware
+    volumes:
+      - cloud_data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  caddy:
+    image: caddy:2.11.9-alpine
+    ports:
+      - "38443:38443/tcp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      cloud:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  cloud_data:
+  caddy_data:
+  caddy_config:

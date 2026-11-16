@@ -1,0 +1,8 @@
+# Run docker compose -f compose.yaml -f compose.public.yaml up -d --build
+# Certificates are provided and renewed by a separate ACME client; Caddy does
+# not manage them in this mode. Restart/reload after certificate rotation.
+services:
+  caddy:
+    volumes:
+      - ./Caddyfile.public:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy/certs:ro

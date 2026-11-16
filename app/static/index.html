@@ -1,0 +1,23 @@
+<!doctype html><html lang="bg"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#112f4a"><title>Vega-S Cloud</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="wrap">
+  <header class="header"><div><h1>♨ Vega-S Cloud</h1><p class="muted">Дистанционно управление на термостати</p></div><div id="userbar" hidden><span id="username"></span><button id="logout" class="minor">Изход</button></div></header>
+  <p id="notice" class="notice" role="status"></p>
+  <section id="login" class="card" style="max-width:430px;margin:auto"><h2>Вход в профила</h2>
+    <form id="loginForm"><label>Потребителско име<input id="loginName" autocomplete="username" required></label><label>Парола<input id="loginPass" type="password" autocomplete="current-password" required></label>
+    <label class="check"><input id="remember" type="checkbox" checked> Запомни ме на това устройство (без често повторно влизане)</label>
+    <button>Вход</button></form><p class="muted">Потребителите се създават само от администратора.</p>
+  </section>
+  <section id="dashboard" hidden>
+    <div class="cols"><section class="card"><h2>Добави термостат</h2><p class="muted">Открий <b>ID и код за добавяне</b> в локалната страница „Облак“ на термостата. Устройството трябва вече да се е регистрирало в сървъра.</p>
+      <form id="claimForm"><label>ID на устройство<input id="claimId" placeholder="irheater_ab12cd" required></label><label>Код от устройството<input id="claimCode" placeholder="Уникален код" required></label><button>Добави към моя профил</button></form>
+    </section><section class="card"><h2>Моите устройства</h2><p class="muted">Командите се предават през защитената връзка. При липса на интернет термостатът продължава да работи локално.</p><button id="refresh" class="minor">↻ Обнови</button><div id="devices" class="devices"></div></section></div>
+    <section class="card"><h2>Промени паролата си</h2><form id="myPasswordForm" class="cols"><label>Текуща парола<input id="currentPw" type="password" autocomplete="current-password" required></label><label>Нова парола (12+ символа)<input id="newPw" type="password" minlength="12" autocomplete="new-password" required></label><button>Смени паролата и излез</button></form></section>
+    <section id="adminPanel" hidden>
+      <h2>Администраторски панел</h2><div class="cols">
+        <section class="card"><h3>Добави потребител</h3><form id="newUserForm"><label>Потребителско име<input id="newUsername" minlength="3" required></label><label>Начална парола (поне 12 символа)<input id="newUserPassword" type="password" minlength="12" required></label><button>Създай потребител</button></form><div id="users"></div></section>
+        <section class="card"><h3>Качи фърмуер за отдалечен OTA</h3><p class="muted">Само за ESP8266 и само проверен .bin файл, компилиран за същата платка и Flash оформление.</p><form id="firmwareForm"><label>Версия<input id="fwVersion" placeholder="v6.6" required></label><label>.bin файл<input id="fwFile" type="file" accept=".bin" required></label><button>Качи към сървъра</button></form><h3>Налични версии</h3><div id="firmware"></div><h3>Последни OTA задачи</h3><div id="otaJobs"></div></section>
+      </div><section class="card"><h3>Последни действия</h3><div id="audit"></div></section>
+    </section>
+  </section>
+  <footer>Vega-S Cloud · Защитена локална логика · Без директен достъп до домашните устройства</footer>
+</main><script src="/static/app.js" defer></script></body></html>
