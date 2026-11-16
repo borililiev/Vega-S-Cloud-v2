@@ -562,6 +562,8 @@ def queue_ota(did:str,p:OTARequest,u=Depends(admin_auth)):
         fw=db.execute('SELECT * FROM firmware WHERE id=?',(p.firmware_id,)).fetchone()
         if not fw:raise HTTPException(404,'Няма такъв фърмуер')
         if not d['seen'] or now()-d['seen']>35:raise HTTPException(409,'Устройството трябва да е онлайн')
+        if 'sonoff' in json.loads(d['state'] or '{}').get('version','').lower():
+            raise HTTPException(409,'OTA е изключено за Sonoff TH с 1 MB Flash. Използвай серийно програмиране.')
         if fw['bytes']>1024*1024:raise HTTPException(400,'Firmware too large')
         if db.execute("SELECT id FROM ota_jobs WHERE device_id=? AND status IN('pending','downloading') AND expires>?",(did,now())).fetchone():
             raise HTTPException(409,'Вече има активна OTA задача')
