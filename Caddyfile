@@ -1,3 +1,9 @@
+{
+    # Clients connecting to an IP address usually do not send TLS SNI.
+    # In Docker, use the public IP for certificate selection instead of the container IP.
+    default_sni 213.91.182.27
+}
+
 # TEST TLS only: Caddy internal CA. Trust the generated CA explicitly on every client.
 # Do not click through browser warnings. For public rollout, use a publicly trusted
 # certificate and adapt this config to existing port 80/443 reverse-proxy infrastructure.
