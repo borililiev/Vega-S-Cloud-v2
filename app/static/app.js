@@ -1,5 +1,5 @@
 'use strict';
-let csrf='',role='',username='',allDevices=[],firmwareList=[],usersList=[],selectedId='',period='24h';
+let csrf='',role='',username='',allDevices=[],adminDevices=[],firmwareList=[],usersList=[],selectedId='',period='24h';
 let targetDraft=null,targetTimer=null,chartLast=0,chartBusy=false,currentTab='home';
 const $=id=>document.getElementById(id);
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n};
@@ -151,12 +151,41 @@ function adminDeviceRow(d){
   notice('Тарифите са запазени (EUR/kWh)');await refresh();
  }catch(e){notice(e.message)}};
  box.append(form);
+ const ownerPanel=el('div',undefined,'owner-editor');
+ const ownerLabel=el('label','Собственик на термостата');
+ const ownerSelect=el('select');
+ const noOwner=el('option','— Без собственик —');noOwner.value='';ownerSelect.append(noOwner);
+ for(const person of usersList){
+  if(!person.active && person.id!==d.owner_id)continue;
+  const o=el('option',person.username+(person.active?'':' (неактивен)'));
+  o.value=String(person.id);ownerSelect.append(o);
+ }
+ ownerSelect.value=d.owner_id===null?'':String(d.owner_id);
+ ownerLabel.append(ownerSelect);
+ const ownerButtons=el('div',undefined,'owner-buttons');
+ const transfer=el('button','Смени собственик','minor');transfer.type='button';
+ transfer.onclick=async()=>{
+  const newOwner=ownerSelect.value===''?null:Number(ownerSelect.value);
+  if(newOwner===d.owner_id){notice('Собственикът не е променен');return}
+  if(newOwner===null){notice('За премахване използвай „Премахни от профила“');return}
+  const name=usersList.find(u=>u.id===newOwner)?.username||'избрания потребител';
+  if(!confirm('Прехвърли „'+d.name+'“ към '+name+'? Старият собственик ще изгуби достъп и чакащите команди ще бъдат отменени.'))return;
+  try{await api('/api/admin/devices/'+encodeURIComponent(d.id)+'/owner','PUT',{owner_id:newOwner});
+   notice('Собственикът е сменен на '+name);await refresh();await refreshAdmin();
+  }catch(e){notice(e.message)}
+ };
+ const release=el('button','Премахни от профила','minor danger');release.type='button';
+ release.disabled=d.owner_id===null;
+ release.onclick=async()=>{
+  if(!confirm('Премахни „'+d.name+'“ от профила на '+(d.owner||'потребителя')+'? Устройството и енергийната му история се запазват, но ще остане без собственик. Кодът за добавяне ще трябва да се поднови от термостата.'))return;
+  try{await api('/api/admin/devices/'+encodeURIComponent(d.id)+'/owner','PUT',{owner_id:null});
+   notice('Термостатът е освободен. За ново добавяне смени кода от локалната страница „Облак“.');
+   await refresh();await refreshAdmin();
+  }catch(e){notice(e.message)}
+ };
+ ownerButtons.append(transfer,release);ownerPanel.append(ownerLabel,ownerButtons);box.append(ownerPanel);
  const actions=el('div',undefined,'admin-actions');
  const loc=el('button',d.location?'Изтрий локация':'📍 Запази локация','minor');loc.onclick=()=>d.location?removeLocation(d.id):useLocation(d.id);actions.append(loc);
- const release=el('button','Освободи от профила','minor danger');release.onclick=async()=>{
-  if(!confirm('Освободи '+d.name+'? За ново сдвояване смени кода на локалната страница „Облак“.'))return;
-  try{await api('/api/admin/devices/'+encodeURIComponent(d.id)+'/release','POST',{});notice('Устройството е освободено');await refresh();await refreshAdmin()}catch(e){notice(e.message)}
- };actions.append(release);
  const selector=el('select');selector.append(el('option','Избери .bin версия'));
  for(const f of firmwareList){const opt=el('option',f.version+' · '+Math.round(f.bytes/1024)+' KB');opt.value=f.id;selector.append(opt)}
  const ota=el('button','OTA обновяване','minor');ota.disabled=!d.online||!firmwareList.length||String(d.state?.version||'').toLowerCase().includes('sonoff');
@@ -167,8 +196,9 @@ function adminDeviceRow(d){
 }
 async function refreshAdmin(){
  if(role!=='admin'||currentTab!=='admin')return;
- try{const [u,f,o,a]=await Promise.all([api('/api/admin/users'),api('/api/admin/firmware'),api('/api/admin/ota'),api('/api/admin/audit')]);
-  usersList=u.users||[];firmwareList=f.firmware||[];
+ try{const [u,f,o,a,inventory]=await Promise.all([api('/api/admin/users'),api('/api/admin/firmware'),api('/api/admin/ota'),api('/api/admin/audit'),api('/api/admin/devices')]);
+  usersList=u.users||[];firmwareList=f.firmware||[];adminDevices=inventory.devices||[];
+  $('devicesAdminCount').textContent=adminDevices.length+' общо · '+(inventory.assigned||0)+' с профил';
   const owners=$('claimOwner');owners.replaceChildren();
   for(const user of usersList.filter(x=>x.active)){const opt=el('option',user.username+(user.role==='admin'?' (администратор)':''));opt.value=String(user.id);if(user.username===username)opt.selected=true;owners.append(opt)}
   setChildren('users',usersList.map(user=>{
@@ -180,7 +210,7 @@ async function refreshAdmin(){
     row.append(b,reset)
    }return row;
   }));
-  setChildren('devicesAdmin',allDevices.map(adminDeviceRow));
+  setChildren('devicesAdmin',adminDevices.length?adminDevices.map(adminDeviceRow):[el('p','Няма регистрирани термостати.','muted')]);
   setChildren('firmware',firmwareList.map(f=>el('div',f.version+' · '+Math.round(f.bytes/1024)+' KB · SHA256 '+f.sha256.slice(0,12),'listrow')));
   setChildren('otaJobs',(o.jobs||[]).slice(0,15).map(j=>el('div',j.device_id+' · '+j.version+' · '+j.status,'listrow')));
   setChildren('audit',(a.events||[]).slice(0,20).map(j=>el('div',new Date(j.ts*1000).toLocaleString('bg-BG')+' · '+j.action+' · '+(j.detail||''),'listrow')));
