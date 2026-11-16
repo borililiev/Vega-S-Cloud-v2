@@ -82,3 +82,66 @@ def test_full_flow(tmp_path):
         assert b.get('/api/session').status_code==401
         # A privileged admin still sees all devices.
         assert len(a.get('/api/devices').json()['devices'])==1
+
+
+def test_energy_dashboard_and_admin_assignment(tmp_path,monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import app.main as m
+    os.environ['VEGA_ADMIN_PASSWORD']='long-admin-test-password-12345'
+    os.environ['VEGA_SESSION_SECRET']='session_secret_for_testing_very_long_random_long'
+    os.environ['VEGA_DB']=str(tmp_path/'energy.sqlite3')
+    os.environ['VEGA_FIRMWARE_DIR']=str(tmp_path/'firmware')
+    os.environ['VEGA_PUBLIC_URL']=ORIGIN
+    importlib.reload(m)
+    moment=[int(datetime(2026,11,16,12,0,tzinfo=ZoneInfo('Europe/Sofia')).timestamp())]
+    monkeypatch.setattr(m,'now',lambda:moment[0])
+    hdr={'Origin':ORIGIN,'X-Requested-With':'VegaCloud'}
+    with TestClient(m.app,base_url=ORIGIN) as admin,TestClient(m.app,base_url=ORIGIN) as user,TestClient(m.app,base_url=ORIGIN) as other:
+        a=admin.post('/api/login',headers=hdr,json={'username':'admin','password':'long-admin-test-password-12345'})
+        a_hdr={**hdr,'X-CSRF-Token':a.json()['csrf']}
+        for username in ('maria','petar'):
+            assert admin.post('/api/admin/users',headers=a_hdr,json={'username':username,'password':'secure-'+username+'-pass-001'}).status_code==200
+        users=admin.get('/api/admin/users').json()['users']
+        uid=next(x['id'] for x in users if x['username']=='maria')
+        r=user.post('/api/login',headers=hdr,json={'username':'maria','password':'secure-maria-pass-001'})
+        u_hdr={**hdr,'X-CSRF-Token':r.json()['csrf']}
+        r=other.post('/api/login',headers=hdr,json={'username':'petar','password':'secure-petar-pass-001'})
+        o_hdr={**hdr,'X-CSRF-Token':r.json()['csrf']}
+        did='irheater_ab12ef';token='xyz'+('3'*48);pair='ABCDEFGHIJKLMNPQRSTUVWX'
+        assert admin.post('/device/enroll',json={'id':did,'name':'Vega-S 400 W','token':token,'pairing_code':pair}).status_code==200
+        # New admin-only assignment to a nonadmin user, no password/token exposed.
+        assert user.post('/api/admin/devices/claim',headers=u_hdr,json={'id':did,'pairing_code':pair,'owner_id':uid}).status_code==403
+        assert admin.post('/api/admin/devices/claim',headers=a_hdr,json={'id':did,'pairing_code':pair,'owner_id':uid}).status_code==200
+        assert len(user.get('/api/devices').json()['devices'])==1
+        assert other.get('/api/devices').json()['devices']==[]
+        assert other.get(f'/api/devices/{did}/energy').status_code==404
+        assert user.put(f'/api/admin/devices/{did}/rates',headers=u_hdr,json={'day_rate':.28,'night_rate':.15,'day_start':7,'night_start':23}).status_code==403
+        assert admin.put(f'/api/admin/devices/{did}/rates',headers=a_hdr,json={'day_rate':.28,'night_rate':.15,'day_start':7,'night_start':23}).status_code==200
+        devhdr={'Authorization':'Bearer '+token}
+        base={'temperature':19.5,'target':22.0,'humidity':None,'sensor_ok':True,'enabled':True,'relay':True,'power_w':400,'version':'v6.6-SonoffTH-Beta'}
+        assert admin.post(f'/device/{did}/sync',headers=devhdr,json=base).status_code==200
+        moment[0]+=12
+        assert admin.post(f'/device/{did}/sync',headers=devhdr,json=base).status_code==200
+        d=user.get('/api/devices').json()['devices'][0]
+        assert d['energy']['kind']=='estimated'
+        assert d['energy']['today']['kwh']==.001  # 12s * 400W = 1.333 Wh
+        assert d['energy']['today']['runtime_h']==0.0  # 0.0033h displayed with 2 decimals
+        assert d['energy']['today']['cost_eur']==0.0
+        assert d['energy']['cost_configured']
+        for period,count in [('24h',24),('month',16),('year',12)]:
+            values=user.get(f'/api/devices/{did}/energy?period={period}')
+            assert values.status_code==200,values.text
+            assert len(values.json()['points'])==count
+        # Long absence must NOT be treated as heating operation.
+        moment[0]+=3600
+        assert admin.post(f'/device/{did}/sync',headers=devhdr,json=base).status_code==200
+        d=user.get('/api/devices').json()['devices'][0]
+        assert d['energy']['today']['kwh']==.001
+        # Valid off-state update cannot add any energy.
+        moment[0]+=12
+        assert admin.post(f'/device/{did}/sync',headers=devhdr,json={**base,'relay':False}).status_code==200
+        moment[0]+=12
+        assert admin.post(f'/device/{did}/sync',headers=devhdr,json={**base,'relay':False}).status_code==200
+        assert user.get('/api/devices').json()['devices'][0]['energy']['today']['kwh']==.003  # 12s additional while previous relay on
+
