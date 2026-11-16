@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+certs
+backups
+*.sqlite3
+*.sqlite
+*.db
+*.bin
+__pycache__
+.pytest_cache
+.venv
