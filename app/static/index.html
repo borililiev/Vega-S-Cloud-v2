@@ -1,23 +1,98 @@
-<!doctype html><html lang="bg"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#112f4a"><title>Vega-S Cloud</title><link rel="stylesheet" href="/static/app.css"></head>
-<body><main class="wrap">
-  <header class="header"><div><h1>♨ Vega-S Cloud</h1><p class="muted">Дистанционно управление на термостати</p></div><div id="userbar" hidden><span id="username"></span><button id="logout" class="minor">Изход</button></div></header>
-  <p id="notice" class="notice" role="status"></p>
-  <section id="login" class="card" style="max-width:430px;margin:auto"><h2>Вход в профила</h2>
-    <form id="loginForm"><label>Потребителско име<input id="loginName" autocomplete="username" required></label><label>Парола<input id="loginPass" type="password" autocomplete="current-password" required></label>
-    <label class="check"><input id="remember" type="checkbox" checked> Запомни ме на това устройство (без често повторно влизане)</label>
-    <button>Вход</button></form><p class="muted">Потребителите се създават само от администратора.</p>
-  </section>
-  <section id="dashboard" hidden>
-    <div class="cols"><section class="card"><h2>Добави термостат</h2><p class="muted">Открий <b>ID и код за добавяне</b> в локалната страница „Облак“ на термостата. Устройството трябва вече да се е регистрирало в сървъра.</p>
-      <form id="claimForm"><label>ID на устройство<input id="claimId" placeholder="irheater_ab12cd" required></label><label>Код от устройството<input id="claimCode" placeholder="Уникален код" required></label><button>Добави към моя профил</button></form>
-    </section><section class="card"><h2>Моите устройства</h2><p class="muted">Командите се предават през защитената връзка. При липса на интернет термостатът продължава да работи локално.</p><button id="refresh" class="minor">↻ Обнови</button><div id="devices" class="devices"></div></section></div>
-    <section class="card"><h2>Промени паролата си</h2><form id="myPasswordForm" class="cols"><label>Текуща парола<input id="currentPw" type="password" autocomplete="current-password" required></label><label>Нова парола (12+ символа)<input id="newPw" type="password" minlength="12" autocomplete="new-password" required></label><button>Смени паролата и излез</button></form></section>
-    <section id="adminPanel" hidden>
-      <h2>Администраторски панел</h2><div class="cols">
-        <section class="card"><h3>Добави потребител</h3><form id="newUserForm"><label>Потребителско име<input id="newUsername" minlength="3" required></label><label>Начална парола (поне 12 символа)<input id="newUserPassword" type="password" minlength="12" required></label><button>Създай потребител</button></form><div id="users"></div></section>
-        <section class="card"><h3>Качи фърмуер за отдалечен OTA</h3><p class="muted">Само за ESP8266 и само проверен .bin файл, компилиран за същата платка и Flash оформление.</p><form id="firmwareForm"><label>Версия<input id="fwVersion" placeholder="v6.6" required></label><label>.bin файл<input id="fwFile" type="file" accept=".bin" required></label><button>Качи към сървъра</button></form><h3>Налични версии</h3><div id="firmware"></div><h3>Последни OTA задачи</h3><div id="otaJobs"></div></section>
-      </div><section class="card"><h3>Последни действия</h3><div id="audit"></div></section>
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0c1523">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Vega-S Cloud · Термостат</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="header">
+      <div class="branding"><span class="brand-icon" aria-hidden="true">♨</span><div><h1>Vega-S Cloud</h1><p>Термостат · отдалечено управление</p></div></div>
+      <div id="userbar" class="userbar" hidden><span id="username"></span><button id="logout" type="button" class="ghost small-button">Изход</button></div>
+    </header>
+    <p id="notice" class="notice" role="status" aria-live="polite"></p>
+    <section id="login" class="login-card">
+      <h2>Вход в профила</h2><p class="muted">Управление на твоите Vega-S термостати</p>
+      <form id="loginForm"><label>Потребителско име<input id="loginName" autocomplete="username" required></label>
+        <label>Парола<input id="loginPass" type="password" autocomplete="current-password" required></label>
+        <label class="check"><input id="remember" type="checkbox" checked> Запомни ме на това устройство</label>
+        <button type="submit" class="primary">Вход</button>
+      </form><p class="muted small">Новите потребители се създават от администратора.</p>
     </section>
-  </section>
-  <footer>Vega-S Cloud · Защитена локална логика · Без директен достъп до домашните устройства</footer>
-</main><script src="/static/app.js" defer></script></body></html>
+    <section id="dashboard" hidden>
+      <nav class="tabs" aria-label="Навигация">
+        <button type="button" class="tab active" id="homeTab">Термостат</button>
+        <button type="button" class="tab" id="adminTab" hidden>Админ / Настройки</button>
+        <button type="button" class="tab" id="profileTab">Профил</button>
+      </nav>
+      <section id="homeSection">
+        <div class="device-toolbar"><div><label class="field-caption" for="devicePicker">Избери термостат</label><select id="devicePicker" aria-label="Избери термостат"></select></div>
+          <div class="device-toolbar-actions"><span id="onlineBadge" class="status-pill">—</span><button id="refresh" type="button" class="ghost small-button">↻ Обнови</button></div>
+        </div>
+        <div id="emptyState" class="empty-state" hidden><h2>Все още няма термостат</h2><p>Администраторът може да добави устройство и да го свърже с твоя профил от раздел „Админ / Настройки“.</p></div>
+        <div id="thermoView" hidden>
+          <h2 id="deviceTitle" class="device-title">Vega-S</h2>
+          <section class="thermo-card">
+            <div class="room-label">Температура в стаята</div>
+            <div id="currentValue" class="room-value" aria-live="polite">—</div>
+            <div class="divider"></div>
+            <div class="target-label">Зададена температура</div>
+            <div class="target-control">
+              <button type="button" class="adjust" id="targetMinus" aria-label="Намали с 0,5 градуса">−</button>
+              <div id="targetValue" class="target-number">—</div>
+              <button type="button" class="adjust" id="targetPlus" aria-label="Увеличи с 0,5 градуса">+</button>
+            </div>
+            <div class="relay-status"><span id="relayLed" class="relay-led" aria-hidden="true"></span><span id="relayText">Реле: —</span></div>
+            <button type="button" id="toggleButton" class="power-button">Включи отоплението</button>
+            <p id="thermoFeedback" class="feedback" aria-live="polite"></p>
+          </section>
+          <section class="stats-block">
+            <div class="block-heading"><h2>⚡ Потребление на енергия</h2><span class="mini-pill">Оценка</span></div>
+            <div class="stat-grid">
+              <div class="stat-tile"><small>Днес</small><strong id="energyToday">—</strong><span>kWh</span></div>
+              <div class="stat-tile"><small>Този месец</small><strong id="energyMonth">—</strong><span>kWh</span></div>
+              <div class="stat-tile"><small>Работа днес</small><strong id="runtimeToday">—</strong><span>часа</span></div>
+              <div class="stat-tile"><small>Разход днес</small><strong id="costToday">—</strong><span>€</span></div>
+            </div>
+            <div class="details-row"><div>Дневна енергия <strong id="energyDayPart">—</strong> kWh</div><div>Нощна енергия <strong id="energyNightPart">—</strong> kWh</div></div>
+            <div class="details-row"><div>Разход за месеца <strong id="costMonth">—</strong> €</div><div>Номинална мощност <strong id="powerValue">—</strong> W</div></div>
+            <div class="block-heading chart-head"><h3>История на консумацията</h3><div class="chart-tabs"><button data-period="24h" class="period active" type="button">24 ч.</button><button data-period="month" class="period" type="button">Месец</button><button data-period="year" class="period" type="button">Година</button></div></div>
+            <div id="energyChart" class="energy-chart" role="img" aria-label="Графика на приблизителното потребление"></div>
+            <p class="stats-help">Показателите са изчислени от времето, през което облакът е отчитал включено реле, и номиналната мощност на отоплителя. Не са измерени с електромер. Прекъсванията в интернет не се допълват и данните започват от обновяването на облачния сървър. Часовата зона е Европа/София.</p>
+          </section>
+          <p class="last-update">Последна връзка: <span id="lastSeen">—</span> · Версия: <span id="firmwareVersion">—</span></p>
+        </div>
+      </section>
+      <section id="adminSection" hidden>
+        <h2 class="section-title">Админ / Настройки</h2>
+        <div class="admin-grid">
+          <section class="admin-card"><h3>Добави термостат</h3><p class="muted">Устройството първо трябва да е свързано със сървъра. Вземи ID и кода от локалната му страница „Облак“.</p>
+            <form id="claimForm"><label>ID на устройство<input id="claimId" placeholder="irheater_ab12cd" required></label><label>Код за добавяне<input id="claimCode" autocomplete="off" required></label>
+              <label>Собственик<select id="claimOwner"></select></label><button type="submit" class="primary">Добави термостат</button></form>
+          </section>
+          <section class="admin-card"><h3>Добави потребител</h3><form id="newUserForm"><label>Потребителско име<input id="newUsername" minlength="3" autocomplete="off" required></label>
+            <label>Начална парола (поне 12 символа)<input id="newUserPassword" type="password" minlength="12" autocomplete="new-password" required></label>
+            <button type="submit" class="primary">Създай потребител</button></form><h3>Потребители</h3><div id="users"></div></section>
+          <section class="admin-card wide"><h3>Термостати · настройки и обслужване</h3><div id="devicesAdmin"></div></section>
+          <section class="admin-card"><h3>Фърмуер за отдалечен OTA</h3><p class="muted">Само проверен .bin за правилната платка и Flash разпределение. Sonoff TH с 1 MB Flash не поддържа OTA в текущата версия.</p>
+            <form id="firmwareForm"><label>Версия<input id="fwVersion" placeholder="v6.6" required></label><label>.bin файл<input id="fwFile" type="file" accept=".bin" required></label><button type="submit" class="primary">Качи фърмуер</button></form>
+            <h3>Налични версии</h3><div id="firmware"></div><h3>Последни OTA задачи</h3><div id="otaJobs"></div>
+          </section>
+          <section class="admin-card"><h3>Последни действия</h3><div id="audit"></div></section>
+        </div>
+      </section>
+      <section id="profileSection" hidden><div class="admin-card profile-card"><h2>Моят профил</h2><p class="muted">Смяната на паролата прекратява текущите сесии.</p>
+        <form id="myPasswordForm"><label>Текуща парола<input id="currentPw" type="password" autocomplete="current-password" required></label>
+          <label>Нова парола (поне 12 символа)<input id="newPw" type="password" minlength="12" autocomplete="new-password" required></label>
+          <button type="submit" class="primary">Смени паролата и излез</button></form></div></section>
+    </section>
+    <footer>Vega-S Cloud · Локалните защити работят независимо от облака</footer>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
