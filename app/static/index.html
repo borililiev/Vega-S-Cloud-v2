@@ -78,7 +78,10 @@
           <section class="admin-card"><h3>Добави потребител</h3><form id="newUserForm"><label>Потребителско име<input id="newUsername" minlength="3" autocomplete="off" required></label>
             <label>Начална парола (поне 12 символа)<input id="newUserPassword" type="password" minlength="12" autocomplete="new-password" required></label>
             <button type="submit" class="primary">Създай потребител</button></form><h3>Потребители</h3><div id="users"></div></section>
-          <section class="admin-card wide"><h3>Термостати · настройки и обслужване</h3><div id="devicesAdmin"></div></section>
+          <section class="admin-card wide">
+            <div class="admin-heading"><div><h3>Всички термостати</h3><p class="muted">Списък на всички регистрирани контролери, включително тези без собственик. Смяната на собственик не изтрива данните на устройството.</p></div><span class="mini-pill" id="devicesAdminCount">—</span></div>
+            <div id="devicesAdmin"></div>
+          </section>
           <section class="admin-card"><h3>Фърмуер за отдалечен OTA</h3><p class="muted">Само проверен .bin за правилната платка и Flash разпределение. Sonoff TH с 1 MB Flash не поддържа OTA в текущата версия.</p>
             <form id="firmwareForm"><label>Версия<input id="fwVersion" placeholder="v6.6" required></label><label>.bin файл<input id="fwFile" type="file" accept=".bin" required></label><button type="submit" class="primary">Качи фърмуер</button></form>
             <h3>Налични версии</h3><div id="firmware"></div><h3>Последни OTA задачи</h3><div id="otaJobs"></div>
