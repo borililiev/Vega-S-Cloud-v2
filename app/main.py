@@ -622,7 +622,7 @@ def index():
       'Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
       'Permissions-Policy':'geolocation=(self)','X-Content-Type-Options':'nosniff'})
 @app.get('/static/app.js')
-def js():return FileResponse(ROOT/'static'/'app.js',media_type='text/javascript')
+def js():return FileResponse(ROOT/'static'/'app.js',media_type='text/javascript',headers={'Cache-Control':'no-store'})
 @app.get('/static/app.css')
-def css():return FileResponse(ROOT/'static'/'app.css',media_type='text/css')
+def css():return FileResponse(ROOT/'static'/'app.css',media_type='text/css',headers={'Cache-Control':'no-store'})
 
