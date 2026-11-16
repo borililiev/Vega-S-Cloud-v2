@@ -10,6 +10,26 @@ import hmac
 
 from fastapi import Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, model_validator
+from typing import Literal
+
+
+class HACommand(BaseModel):
+    kind: Literal["set_mode", "set_target"]
+    value: str
+
+    @model_validator(mode="after")
+    def validate_command(self):
+        if self.kind == "set_mode" and self.value not in ("heat", "off"):
+            raise ValueError("Невалиден режим")
+        if self.kind == "set_target":
+            try:
+                target = float(self.value)
+            except (TypeError, ValueError):
+                raise ValueError("Невалидна температура") from None
+            if not (12 <= target <= 28) or target * 2 != round(target * 2):
+                raise ValueError("Температура 12–28°C, през 0.5°C")
+        return self
 
 
 def install(app, *, connect, digest, now, user_auth, list_devices, send_command, Cmd, audit):
@@ -82,7 +102,7 @@ def install(app, *, connect, digest, now, user_auth, list_devices, send_command,
         return JSONResponse({"devices": result}, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/ha/devices/{did}/commands")
-    def ha_command(did: str, p: Cmd, u=Depends(ha_user)):
+    def ha_command(did: str, p: HACommand, u=Depends(ha_user)):
         # Same validation, authorization, stale-sensor guard, expiry and audit
         # as commands sent from the Vega-S Cloud browser.
         return send_command(did=did, p=p, u=u)
