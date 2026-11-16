@@ -679,3 +679,8 @@ def js():return FileResponse(ROOT/'static'/'app.js',media_type='text/javascript'
 @app.get('/static/app.css')
 def css():return FileResponse(ROOT/'static'/'app.css',media_type='text/css',headers={'Cache-Control':'no-store'})
 
+
+# Home Assistant integration uses this adapter, never the controller's LAN HTTP API.
+from .ha_bridge import install as _install_ha_bridge
+_install_ha_bridge(app, connect=connect, digest=digest, now=now, user_auth=user_auth,
+                   list_devices=list_devices, send_command=send_command, Cmd=Cmd, audit=audit)
