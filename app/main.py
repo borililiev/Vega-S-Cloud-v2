@@ -356,6 +356,27 @@ def list_devices(u=Depends(user_auth)):
                            'location':{'lat':d['lat'],'lon':d['lon']} if d['lat'] is not None else None})
     return {'devices':result}
 
+@app.get('/api/admin/devices')
+def list_admin_devices(u=Depends(admin_auth)):
+    # A dedicated admin inventory; do not expose authentication credentials.
+    items=[]
+    with connect() as db:
+        rows=db.execute('''SELECT d.id,d.name,d.owner_id,u.username AS owner,
+            u.active AS owner_active,d.seen,d.state,d.created,d.lat,d.lon
+            FROM devices d LEFT JOIN users u ON u.id=d.owner_id
+            ORDER BY d.name COLLATE NOCASE,d.id''').fetchall()
+        ts=now()
+        for d in rows:
+            items.append({'id':d['id'],'name':d['name'],'owner_id':d['owner_id'],
+                'owner':d['owner'],'owner_active':bool(d['owner_active']) if d['owner_id'] is not None else None,
+                'online':bool(d['seen'] and ts-d['seen']<=35),'last_seen':d['seen'],
+                'created':d['created'],'state':json.loads(d['state']),
+                'energy':energy_summary(db,d['id'],ts),
+                'location':{'lat':d['lat'],'lon':d['lon']} if d['lat'] is not None else None})
+    return {'devices':items,'total':len(items),
+            'assigned':sum(d['owner_id'] is not None for d in items)}
+
+
 @app.get('/api/devices/{did}/energy')
 def get_device_energy(did:str, period:str='24h', u=Depends(user_auth)):
     if period not in ('24h','month','year'):raise HTTPException(400,'Невалиден период')
@@ -448,6 +469,7 @@ class Cmd(BaseModel):
 @app.post('/api/devices/{did}/commands')
 def send_command(did:str,p:Cmd,u=Depends(user_auth)):
     with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
         dev=device_access(db,u['id'],u['role'],did)
         if p.kind=='set_mode' and p.value=='heat':
             s=json.loads(dev['state'])
@@ -589,17 +611,46 @@ def serve_firmware(did:str,job:str,_=Depends(device_auth)):
     return FileResponse(path,media_type='application/octet-stream',headers={
         'X-MD5':data['md5'],'Cache-Control':'no-store','X-Firmware-Size':str(data['bytes'])})
 
-@app.post('/api/admin/devices/{did}/release')
-def release_device(did:str,u=Depends(admin_auth)):
-    # Admin releases the account binding; local code should be rotated before reassignment.
+class OwnerChange(BaseModel):
+    owner_id:int|None
+
+
+def set_device_owner(did:str,owner_id:int|None,admin_id:int):
     with connect() as db:
-        if not db.execute('SELECT id FROM devices WHERE id=?',(did,)).fetchone():
-            raise HTTPException(404,'Няма устройство')
-        db.execute('UPDATE devices SET owner_id=NULL,lat=NULL,lon=NULL,loc_accuracy=NULL,loc_at=NULL WHERE id=?',(did,))
+        # Serialize reassignment with commands; keep device identity and energy.
+        db.execute('BEGIN IMMEDIATE')
+        d=db.execute('SELECT owner_id FROM devices WHERE id=?',(did,)).fetchone()
+        if not d:raise HTTPException(404,'Няма такъв термостат')
+        before=d['owner_id']
+        if owner_id is not None:
+            owner=db.execute('SELECT id FROM users WHERE id=? AND active=1',(owner_id,)).fetchone()
+            if not owner:raise HTTPException(404,'Избраният потребител не е активен или не съществува')
+        if before==owner_id:
+            return {'ok':True,'changed':False,'owner_id':owner_id}
+        db.execute('''UPDATE devices SET owner_id=?,lat=NULL,lon=NULL,
+          loc_accuracy=NULL,loc_at=NULL WHERE id=?''',(owner_id,did))
         db.execute("UPDATE commands SET status='superseded' WHERE device_id=? AND status='pending'",(did,))
         db.execute("UPDATE ota_jobs SET status='cancelled' WHERE device_id=? AND status IN('pending','downloading')",(did,))
-    audit(u['id'],'device_released',did)
-    return {'ok':True,'warning':'Rotate pairing code on the ESP before transfer'}
+        if owner_id is None:
+            # Invalidate the old pairing code shared with the previous owner.
+            # Generate a new one on the thermostat's local Cloud screen.
+            db.execute('UPDATE devices SET pairing_hash=? WHERE id=?',
+                       (digest(secrets.token_urlsafe(32)),did))
+    audit(admin_id,'device_released' if owner_id is None else 'device_owner_changed',
+          f'{did}:old={before}:new={owner_id}')
+    return {'ok':True,'changed':True,'owner_id':owner_id,
+            'pairing_code_rotation_required':owner_id is None}
+
+
+@app.put('/api/admin/devices/{did}/owner')
+def change_device_owner(did:str,p:OwnerChange,u=Depends(admin_auth)):
+    return set_device_owner(did,p.owner_id,u['id'])
+
+
+@app.post('/api/admin/devices/{did}/release')
+def release_device(did:str,u=Depends(admin_auth)):
+    # Legacy endpoint: same behavior as release in the new UI.
+    return set_device_owner(did,None,u['id'])
 
 class RotatePair(BaseModel):
     pairing_code:str=Field(min_length=16,max_length=64)
